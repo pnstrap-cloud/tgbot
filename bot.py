@@ -74,6 +74,7 @@ def make_caption_kb(caption_id: str) -> InlineKeyboardMarkup:
 
 
 # ============ INSTAGRAM (instaloader) ============
+# ============ INSTAGRAM (instaloader) ============
 def _build_instaloader() -> instaloader.Instaloader:
     L = instaloader.Instaloader(
         download_video_thumbnails=False,
@@ -83,12 +84,19 @@ def _build_instaloader() -> instaloader.Instaloader:
         post_metadata_txt_pattern="",
         quiet=True,
     )
-    if IG_SESSIONFILE and IG_USERNAME:
+    
+    # Пытаемся загрузить куки из файла cookies.txt
+    cookies_file = "cookies.txt"
+    if os.path.exists(cookies_file):
         try:
-            L.load_session_from_file(IG_USERNAME, IG_SESSIONFILE)
-            logger.info("Instagram: сессия загружена для %s", IG_USERNAME)
-        except Exception:
-            logger.exception("Не удалось загрузить сессию Instagram, работаем анонимно")
+            # Загружаем куки для авторизации
+            L.load_session_from_file("", cookies_file)
+            logger.info("✅ Instagram: куки загружены из cookies.txt")
+        except Exception as e:
+            logger.exception("❌ Не удалось загрузить куки, работаем анонимно")
+    else:
+        logger.warning("⚠️ Файл cookies.txt не найден, работаем анонимно")
+    
     return L
 
 
