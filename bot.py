@@ -37,7 +37,6 @@ URL_RE = re.compile(
     r"|vt\.tiktok\.com/[^\s]+)",
     re.IGNORECASE,
 )
-    re.IGNORECASE,
 )
 
 dp = Dispatcher()
