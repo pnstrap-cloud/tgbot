@@ -24,7 +24,7 @@ from yt_dlp import YoutubeDL
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "1850605284:AAEsZpYP2u679yaQL1gLpMte7vB1EMOw8p4"
+BOT_TOKEN = "1850605284:AAGdzhUUV6Txu_7Lg6W09PbSg63W6M3XIro"
 
 
 # 50 МБ — лимит Telegram Bot API на отправку файлов
