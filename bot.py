@@ -1,18 +1,5 @@
 """
 Telegram-бот для скачивания видео и фото из Instagram, TikTok, YouTube Shorts и Pinterest.
-
-Instagram скачивается через instaloader (поддерживает посты, reels, IGTV, карусели,
-одиночные фото и видео). Для остальных источников используется yt-dlp.
-
-Установка:
-    pip install -r requirements.txt
-
-Запуск:
-    export BOT_TOKEN="ваш_токен_от_BotFather"
-    # опционально, для приватных/ограниченных постов Instagram:
-    # export IG_SESSIONFILE="/path/to/instaloader-session-USERNAME"
-    # export IG_USERNAME="ваш_ig_логин"
-    python bot.py
 """
 
 import asyncio
@@ -34,21 +21,23 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
-    BOT_TOKEN = "1850605284:AAFHm0BnbGsgIpw1rEFbsChjCf2rywzlphc"
-
+    InputMediaVideo,
+    Message,
+)
 from yt_dlp import YoutubeDL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise RuntimeError("Задай переменную окружения BOT_TOKEN")
+# ===== ТОКЕН ВШИТ В КОД =====
+BOT_TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ОТ_BOTFATHER"
+# ВНИМАНИЕ: не показывай этот токен никому!
 
+# ===== ОПЦИОНАЛЬНО: сессия для Instagram =====
 IG_SESSIONFILE = os.environ.get("IG_SESSIONFILE")
 IG_USERNAME = os.environ.get("IG_USERNAME")
 
-# 50 МБ — лимит Telegram Bot API на отправку файлов
+# ===== КОНСТАНТЫ =====
 TG_SIZE_LIMIT = 50 * 1024 * 1024
 
 IG_URL_RE = re.compile(
@@ -73,8 +62,6 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
 
 dp = Dispatcher()
-
-# Хранилище подписей: caption_id -> текст
 captions_store: dict[str, str] = {}
 
 
@@ -86,8 +73,7 @@ def make_caption_kb(caption_id: str) -> InlineKeyboardMarkup:
     )
 
 
-# ---------------- Instagram (instaloader) ----------------
-
+# ============ INSTAGRAM (instaloader) ============
 def _build_instaloader() -> instaloader.Instaloader:
     L = instaloader.Instaloader(
         download_video_thumbnails=False,
@@ -107,7 +93,6 @@ def _build_instaloader() -> instaloader.Instaloader:
 
 
 def download_instagram(url: str, out_dir: str) -> tuple[list[Path], str]:
-    """Скачивает пост/reel/карусель через instaloader. Возвращает (файлы, подпись)."""
     m = IG_URL_RE.search(url)
     if not m:
         return [], ""
@@ -118,30 +103,19 @@ def download_instagram(url: str, out_dir: str) -> tuple[list[Path], str]:
 
     target = Path(out_dir) / shortcode
     target.mkdir(parents=True, exist_ok=True)
-    # instaloader пишет в поддиректорию target относительно текущей dirname_pattern
     L.dirname_pattern = str(target)
     L.filename_pattern = "{shortcode}_{mediaid}"
 
     L.download_post(post, target=shortcode)
 
     files = sorted(
-        [
-            p for p in target.rglob("*")
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTS | VIDEO_EXTS
-        ]
+        [p for p in target.rglob("*") if p.is_file() and p.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS)]
     )
     caption = (post.caption or "").strip()
     return files, caption
 
 
-# ---------------- yt-dlp (остальные источники) ----------------
-
-def extract_info(url: str) -> dict:
-    ydl_opts = {"quiet": True, "no_warnings": True, "noplaylist": False, "skip_download": True}
-    with YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(url, download=False)
-
-
+# ============ YT-DLP (остальные) ============
 def download_media(url: str, out_dir: str) -> tuple[list[Path], dict]:
     ydl_opts = {
         "outtmpl": os.path.join(out_dir, "%(id)s_%(playlist_index)s.%(ext)s"),
@@ -157,22 +131,9 @@ def download_media(url: str, out_dir: str) -> tuple[list[Path], dict]:
         info = ydl.extract_info(url, download=True)
 
     files = sorted(
-        [p for p in Path(out_dir).iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS | VIDEO_EXTS]
+        [p for p in Path(out_dir).iterdir() if p.is_file() and p.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS)]
     )
     return files, info or {}
-
-
-async def download_url_to_file(session: aiohttp.ClientSession, url: str, dest: Path) -> Optional[Path]:
-    try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.read()
-            dest.write_bytes(data)
-            return dest
-    except Exception:
-        logger.exception("Ошибка загрузки %s", url)
-        return None
 
 
 def extract_caption(info: dict) -> str:
@@ -181,17 +142,7 @@ def extract_caption(info: dict) -> str:
     for key in ("description", "title"):
         v = info.get(key)
         if v and isinstance(v, str) and v.strip():
-            if key == "title" and len(v) < 5:
-                continue
             return v.strip()
-    entries = info.get("entries") or []
-    for e in entries:
-        if not e:
-            continue
-        for key in ("description", "title"):
-            v = e.get(key)
-            if v and isinstance(v, str) and v.strip():
-                return v.strip()
     return ""
 
 
@@ -201,11 +152,16 @@ def store_caption(text: str) -> str:
     return cid
 
 
+# ============ ОБРАБОТЧИКИ ============
 @dp.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
-        "Привет! Пришли ссылку из Instagram, TikTok, YouTube Shorts или Pinterest — "
-        "скачаю видео/фото и отправлю обратно."
+        "👋 Привет! Отправь ссылку из:\n"
+        "• Instagram (пост, reels, IGTV)\n"
+        "• TikTok\n"
+        "• YouTube Shorts\n"
+        "• Pinterest\n\n"
+        "Я скачаю медиа и покажу подпись по кнопке!"
     )
 
 
@@ -221,7 +177,6 @@ async def on_link(message: Message) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         files: list[Path] = []
         caption_text = ""
-
         is_instagram = bool(IG_URL_RE.search(url))
 
         try:
@@ -242,16 +197,10 @@ async def on_link(message: Message) -> None:
         caption_id = store_caption(caption_text)
         kb = make_caption_kb(caption_id)
 
-        # Фильтруем по размеру
-        ok_files = []
-        for p in files:
-            if p.stat().st_size > TG_SIZE_LIMIT:
-                logger.warning("Файл %s больше 50 МБ, пропуск", p)
-                continue
-            ok_files.append(p)
+        ok_files = [p for p in files if p.stat().st_size <= TG_SIZE_LIMIT]
 
         if not ok_files:
-            await status.edit_text("❌ Все файлы больше 50 МБ (лимит Telegram Bot API).")
+            await status.edit_text("❌ Все файлы больше 50 МБ (лимит Telegram).")
             return
 
         await status.edit_text("📤 Отправляю...")
@@ -260,7 +209,6 @@ async def on_link(message: Message) -> None:
             images = [p for p in ok_files if p.suffix.lower() in IMAGE_EXTS]
             videos = [p for p in ok_files if p.suffix.lower() in VIDEO_EXTS]
 
-            # Instagram-карусель может смешивать фото и видео — отправим одним альбомом
             if is_instagram and len(ok_files) > 1:
                 for chunk_start in range(0, len(ok_files), 10):
                     chunk = ok_files[chunk_start:chunk_start + 10]
@@ -271,7 +219,7 @@ async def on_link(message: Message) -> None:
                         else:
                             media.append(InputMediaVideo(media=FSInputFile(p)))
                     await message.reply_media_group(media)
-                await message.reply("Медиа отправлено.", reply_markup=kb)
+                await message.reply("✅ Медиа отправлено.", reply_markup=kb)
             else:
                 if images:
                     if len(images) == 1 and not videos:
@@ -282,7 +230,7 @@ async def on_link(message: Message) -> None:
                             media = [InputMediaPhoto(media=FSInputFile(p)) for p in chunk]
                             await message.reply_media_group(media)
                         if not videos:
-                            await message.reply("Медиа отправлено.", reply_markup=kb)
+                            await message.reply("✅ Фото отправлены.", reply_markup=kb)
 
                 for i, v in enumerate(videos):
                     markup = kb if (i == len(videos) - 1) else None
@@ -299,24 +247,23 @@ async def on_caption(cb: CallbackQuery) -> None:
     cid = cb.data.split(":", 1)[1]
     text = captions_store.get(cid)
     if text is None:
-        await cb.answer("Подпись больше недоступна.", show_alert=True)
+        await cb.answer("Подпись недоступна.", show_alert=True)
         return
     await cb.answer()
     if text.strip():
-        chunk = text[:4000]
-        await cb.message.reply(chunk)
+        await cb.message.reply(text[:4000])
     else:
         await cb.message.reply("Подписи к этому медиа нет.")
 
 
 @dp.message()
 async def on_other(message: Message) -> None:
-    await message.reply("Пришли ссылку из Instagram, TikTok, YouTube Shorts или Pinterest.")
+    await message.reply("❓ Отправь ссылку на Instagram, TikTok, YouTube Shorts или Pinterest.")
 
 
 async def main() -> None:
     bot = Bot(BOT_TOKEN)
-    logger.info("Бот запущен")
+    logger.info("🚀 Бот запущен!")
     await dp.start_polling(bot)
 
 
