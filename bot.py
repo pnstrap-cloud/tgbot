@@ -34,12 +34,7 @@ from yt_dlp import YoutubeDL
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===== БЕЗОПАСНОЕ ПОЛУЧЕНИЕ ТОКЕНА =====
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    # Для локального теста можно захардкодить, но на сервере используй переменную
-    # BOT_TOKEN = "вставь_токен_здесь_для_теста"
-    raise RuntimeError("Задай переменную окружения BOT_TOKEN")
+BOT_TOKEN = "1850605284:AAFHm0BnbGsgIpw1rEFbsChjCf2rywzlphc"
 
 # ===== КОНСТАНТЫ =====
 TG_SIZE_LIMIT = 50 * 1024 * 1024  # 50 МБ — лимит Telegram
