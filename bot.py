@@ -31,10 +31,12 @@ BOT_TOKEN = "1850605284:AAEsZpYP2u679yaQL1gLpMte7vB1EMOw8p4"
 TG_SIZE_LIMIT = 50 * 1024 * 1024
 
 URL_RE = re.compile(
-    r"https?://(?:www\.)?"
-    r"(?:instagram\.com/(?:p|reel|reels|tv)/[\w\-]+"
-r"|tiktok\.com/[^\s]+)"
+    r"https?://(?:www\.)?(?:instagram\.com/(?:p|reel|reels|tv)/[\w\-]+"
+    r"|tiktok\.com/[^\s]+"
+    r"|vm\.tiktok\.com/[^\s]+"
     r"|vt\.tiktok\.com/[^\s]+)",
+    re.IGNORECASE,
+)
     re.IGNORECASE,
 )
 
