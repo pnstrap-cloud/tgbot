@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ===== ТОКЕН ВШИТ В КОД =====
-BOT_TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ОТ_BOTFATHER"
+BOT_TOKEN = "1850605284:AAFnHO1-nYffajg8qYb3cMpk-bynVmzYYXg"
 # ВНИМАНИЕ: не показывай этот токен никому!
 
 # ===== ОПЦИОНАЛЬНО: сессия для Instagram =====
