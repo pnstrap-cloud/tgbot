@@ -47,7 +47,7 @@ IG_URL_RE = re.compile(
 
 URL_RE = re.compile(
     r"https?://(?:www\.)?"
-    r"(?:instagram\.com/(?:p|reel|reels|tv)/[\w\-]+"
+    r"(?:instagram\.com/(?:p|reel|reels|tv)/[\w\-]+(?:[?][^\s]*)?"
     r"|tiktok\.com/[^\s]+"
     r"|vm\.tiktok\.com/[^\s]+"
     r"|vt\.tiktok\.com/[^\s]+"
