@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ===== ВСТАВЬ СВОЙ ТОКЕН =====
-BOT_TOKEN = "1850605284:AAEsZpYP2u679yaQL1gLpMte7vB1EMOw8p4"
+BOT_TOKEN = "1850605284:AAG2VXv6f60X5ijV4ViRWZhZj4s7v7JXzxM"
 
 dp = Dispatcher()
 
