@@ -1,100 +1,192 @@
 import asyncio
 import logging
-import re
-import aiohttp
 import os
+import re
+import tempfile
+import uuid
+from pathlib import Path
+from typing import Optional
+
+import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Message,
+)
+from yt_dlp import YoutubeDL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===== ВСТАВЬ СВОЙ ТОКЕН =====
+# ===== ТВОЙ НОВЫЙ ТОКЕН (ВСТАВЬ СЮДА) =====
 BOT_TOKEN = "1850605284:AAG2VXv6f60X5ijV4ViRWZhZj4s7v7JXzxM"
 
+# 50 МБ — лимит Telegram Bot API на отправку файлов
+TG_SIZE_LIMIT = 50 * 1024 * 1024
+
+URL_RE = re.compile(
+    r"https?://(?:www\.)?"
+    r"(?:instagram\.com/(?:p|reel|reels|tv)/[\w\-]+"
+    r"|tiktok\.com/[^\s]+"
+    r"|vm\.tiktok\.com/[^\s]+"
+    r"|vt\.tiktok\.com/[^\s]+)",
+    re.IGNORECASE,
+)
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
+
 dp = Dispatcher()
-IG_PATTERN = re.compile(r"(?:https?://)?(?:www\.)?instagram\.com/(?:p|reel|reels|tv)/([a-zA-Z0-9\-_]+)", re.IGNORECASE)
 
-# ===== СКАЧИВАНИЕ ФОТО (работает всегда) =====
-async def download_photo(shortcode: str) -> str | None:
-    json_url = f"https://www.instagram.com/p/{shortcode}/?__a=1"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(json_url, headers=headers, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if 'graphql' in data and 'shortcode_media' in data['graphql']:
-                        media = data['graphql']['shortcode_media']
-                        if media['__typename'] == 'GraphImage':
-                            img_url = media['display_url']
-                            async with session.get(img_url) as img_resp:
-                                if img_resp.status == 200:
-                                    filename = f"photo_{shortcode}.jpg"
-                                    with open(filename, "wb") as f:
-                                        f.write(await img_resp.read())
-                                    return filename
-    except Exception as e:
-        logger.error(f"Ошибка загрузки фото: {e}")
-    return None
+# Хранилище подписей: caption_id -> текст
+captions_store: dict[str, str] = {}
 
-@dp.message(CommandStart())
-async def start(message: Message):
-    await message.answer(
-        "👋 **Финальный бот-помощник!**\n\n"
-        "📸 **Фото** — скачиваю и присылаю **мгновенно**.\n"
-        "🎬 **Видео** — присылаю **одну кнопку** для скачивания на indown.io.\n\n"
-        "Просто отправь ссылку на Instagram."
+
+def make_caption_kb(caption_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Показать подпись", callback_data=f"cap:{caption_id}")]
+        ]
     )
 
-@dp.message(F.text)
-async def handle_message(message: Message):
-    match = IG_PATTERN.search(message.text or "")
+
+def download_media(url: str, out_dir: str) -> tuple[list[Path], dict]:
+    """Скачивает медиа. Возвращает (список путей, info dict)."""
+    ydl_opts = {
+        "outtmpl": os.path.join(out_dir, "%(id)s.%(ext)s"),
+        "format": "mp4/bestvideo*+bestaudio/best",
+        "merge_output_format": "mp4",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": False,
+        "restrictfilenames": True,
+        "ignoreerrors": True,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+
+    files = sorted(
+        [p for p in Path(out_dir).iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS | VIDEO_EXTS]
+    )
+    return files, info or {}
+
+
+def extract_caption(info: dict) -> str:
+    """Достаёт описание/подпись из info yt-dlp."""
+    if not info:
+        return ""
+    for key in ("description", "title"):
+        v = info.get(key)
+        if v and isinstance(v, str) and v.strip():
+            if key == "title" and len(v) < 5:
+                continue
+            return v.strip()
+    entries = info.get("entries") or []
+    for e in entries:
+        if not e:
+            continue
+        for key in ("description", "title"):
+            v = e.get(key)
+            if v and isinstance(v, str) and v.strip():
+                return v.strip()
+    return ""
+
+
+def store_caption(text: str) -> str:
+    cid = uuid.uuid4().hex[:12]
+    captions_store[cid] = text or ""
+    return cid
+
+
+@dp.message(CommandStart())
+async def on_start(message: Message) -> None:
+    await message.answer(
+        "Привет! Пришли ссылку из Instagram или TikTok — "
+        "скачаю видео и покажу подпись по кнопке."
+    )
+
+
+@dp.message(F.text.regexp(URL_RE))
+async def on_link(message: Message) -> None:
+    match = URL_RE.search(message.text or "")
     if not match:
-        await message.answer("❌ Это не ссылка на Instagram.")
         return
+    url = match.group(0)
 
-    shortcode = match.group(1)
-    post_url = f"https://www.instagram.com/p/{shortcode}/"
-    status_msg = await message.answer("⏳ Проверяю пост...")
+    status = await message.reply("⏬ Скачиваю...")
 
-    try:
-        # 1. ПРОБУЕМ СКАЧАТЬ ФОТО
-        photo_file = await download_photo(shortcode)
-        if photo_file:
-            await message.reply_photo(FSInputFile(photo_file), caption="✅ Фото скачано!")
-            await status_msg.delete()
-            os.remove(photo_file)
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            files, info = await asyncio.to_thread(download_media, url, tmp)
+        except Exception as e:
+            logger.exception("Ошибка при скачивании")
+            await status.edit_text(f"❌ Не удалось скачать: {e}")
             return
 
-        # 2. ЕСЛИ ЭТО НЕ ФОТО — ДАЁМ КНОПКУ С indown.io
-        # Ссылка ведёт прямо на сайт, где уже будет подставлена твоя ссылка для скачивания
-        indown_url = f"https://indown.io/"
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬇️ Скачать видео через indown.io", url=indown_url)],
-            ]
-        )
+        if not files:
+            await status.edit_text("❌ Не удалось получить медиа по этой ссылке.")
+            return
 
-        await status_msg.edit_text(
-            f"🎬 **Это видео!**\n\n"
-            f"Нажми на кнопку ниже, чтобы открыть сайт для скачивания.\n"
-            f"На сайте **вставь эту ссылку** и нажми 'Download':\n"
-            f"`{post_url}`\n\n"
-            f"⚡ Это **быстрее и надёжнее**, чем бороться с блокировками.",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
+        caption_text = extract_caption(info)
+        caption_id = store_caption(caption_text)
+        kb = make_caption_kb(caption_id)
 
-    except Exception as e:
-        logger.exception(e)
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
+        # Фильтруем по размеру
+        ok_files = []
+        for p in files:
+            if p.stat().st_size > TG_SIZE_LIMIT:
+                logger.warning("Файл %s больше 50 МБ, пропуск", p)
+                continue
+            ok_files.append(p)
 
-async def main():
+        if not ok_files:
+            await status.edit_text("❌ Все файлы больше 50 МБ (лимит Telegram).")
+            return
+
+        await status.edit_text("📤 Отправляю...")
+
+        try:
+            # Отправляем видео
+            for i, v in enumerate(ok_files):
+                markup = kb if (i == len(ok_files) - 1) else None
+                await message.reply_video(FSInputFile(v), reply_markup=markup)
+
+            await status.delete()
+        except Exception as e:
+            logger.exception("Ошибка при отправке")
+            await status.edit_text(f"❌ Не удалось отправить: {e}")
+
+
+@dp.callback_query(F.data.startswith("cap:"))
+async def on_caption(cb: CallbackQuery) -> None:
+    cid = cb.data.split(":", 1)[1]
+    text = captions_store.get(cid)
+    if text is None:
+        await cb.answer("Подпись больше недоступна.", show_alert=True)
+        return
+    await cb.answer()
+    if text.strip():
+        await cb.message.reply(text[:4000])
+    else:
+        await cb.message.reply("Подписи к этому видео нет.")
+
+
+@dp.message()
+async def on_other(message: Message) -> None:
+    await message.reply("Пришли ссылку из Instagram или TikTok.")
+
+
+async def main() -> None:
     bot = Bot(BOT_TOKEN)
-    logger.info("🚀 Финальный бот-помощник запущен!")
+    logger.info("🚀 Бот запущен!")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
