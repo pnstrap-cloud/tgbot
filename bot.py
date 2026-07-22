@@ -23,18 +23,21 @@ from yt_dlp import YoutubeDL
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===== ТВОЙ НОВЫЙ ТОКЕН (ВСТАВЬ СЮДА) =====
+# ===== ТВОЙ ТОКЕН (ВСТАВЬ СВОЙ) =====
 BOT_TOKEN = "1850605284:AAG2VXv6f60X5ijV4ViRWZhZj4s7v7JXzxM"
 
 # 50 МБ — лимит Telegram Bot API на отправку файлов
 TG_SIZE_LIMIT = 50 * 1024 * 1024
 
+# ===== РЕГУЛЯРКА ДЛЯ ССЫЛОК (ДОБАВЛЕН PINTEREST) =====
 URL_RE = re.compile(
     r"https?://(?:www\.)?"
     r"(?:instagram\.com/(?:p|reel|reels|tv)/[\w\-]+"
     r"|tiktok\.com/[^\s]+"
     r"|vm\.tiktok\.com/[^\s]+"
-    r"|vt\.tiktok\.com/[^\s]+)",
+    r"|vt\.tiktok\.com/[^\s]+"
+    r"|pinterest\.[\w.]+/pin/[\w\-]+"
+    r"|pin\.it/[\w\-]+)",  # Короткие ссылки Pinterest
     re.IGNORECASE,
 )
 
@@ -59,7 +62,7 @@ def download_media(url: str, out_dir: str) -> tuple[list[Path], dict]:
     """Скачивает медиа. Возвращает (список путей, info dict)."""
     ydl_opts = {
         "outtmpl": os.path.join(out_dir, "%(id)s.%(ext)s"),
-        "format": "mp4/bestvideo*+bestaudio/best",
+        "format": "best[ext=mp4]/best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -107,8 +110,11 @@ def store_caption(text: str) -> str:
 @dp.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
-        "Привет! Пришли ссылку из Instagram или TikTok — "
-        "скачаю видео и покажу подпись по кнопке."
+        "Привет! Пришли ссылку из:\n"
+        "• Instagram\n"
+        "• TikTok\n"
+        "• Pinterest\n\n"
+        "Я скачаю видео/фото и покажу подпись по кнопке."
     )
 
 
@@ -152,9 +158,25 @@ async def on_link(message: Message) -> None:
         await status.edit_text("📤 Отправляю...")
 
         try:
+            # Определяем тип файлов
+            images = [p for p in ok_files if p.suffix.lower() in IMAGE_EXTS]
+            videos = [p for p in ok_files if p.suffix.lower() in VIDEO_EXTS]
+
+            # Отправляем фото
+            if images:
+                if len(images) == 1 and not videos:
+                    await message.reply_photo(FSInputFile(images[0]), reply_markup=kb)
+                else:
+                    for chunk_start in range(0, len(images), 10):
+                        chunk = images[chunk_start:chunk_start + 10]
+                        media = [InputMediaPhoto(media=FSInputFile(p)) for p in chunk]
+                        await message.reply_media_group(media)
+                    if not videos:
+                        await message.reply("Медиа отправлено.", reply_markup=kb)
+
             # Отправляем видео
-            for i, v in enumerate(ok_files):
-                markup = kb if (i == len(ok_files) - 1) else None
+            for i, v in enumerate(videos):
+                markup = kb if (i == len(videos) - 1) else None
                 await message.reply_video(FSInputFile(v), reply_markup=markup)
 
             await status.delete()
@@ -174,17 +196,17 @@ async def on_caption(cb: CallbackQuery) -> None:
     if text.strip():
         await cb.message.reply(text[:4000])
     else:
-        await cb.message.reply("Подписи к этому видео нет.")
+        await cb.message.reply("Подписи к этому медиа нет.")
 
 
 @dp.message()
 async def on_other(message: Message) -> None:
-    await message.reply("Пришли ссылку из Instagram или TikTok.")
+    await message.reply("Пришли ссылку из Instagram, TikTok или Pinterest.")
 
 
 async def main() -> None:
     bot = Bot(BOT_TOKEN)
-    logger.info("🚀 Бот запущен!")
+    logger.info("🚀 Бот запущен! Поддерживает Instagram, TikTok и Pinterest.")
     await dp.start_polling(bot)
 
 
